@@ -6,6 +6,7 @@ author:
     corresponding: true
     email: j.vercelloni@aims.gov.au
   - name: Nicholas Hammerman
+    email: n.hammerman@uq.edu.au
 engine: knitr
 format:
   html:
@@ -32,7 +33,7 @@ format:
 execute: 
   message: false
   warning: false
-  cache: true
+  cache: false
 editor:
   markdown:
     wrap: 72
@@ -71,7 +72,6 @@ dat <- read.csv(paste0(path,"data/compiled_cleaned_data_long.csv"))
 dat_dup <- slice_duplicates(dat)
 # If image duplicates, keep only one 
 dat <- clean_data(dat)
-
 ```
 
 ::: {.callout-warning}
@@ -101,37 +101,6 @@ year_counts <- table(years)
 #| tbl-cap: Number of surveys per year. 
 knitr::kable(year_counts)
 ```
-
-<!-- ```{r}
-#| echo: false
-#| eval: true
-
-green_palette <- c(
-  "#e9f7e5", "#c8e8c1", "#a6d89d", "#84d079", "#62c755", # Light to medium greens
-  "#41b530", "#2ea50a", "#116c00", "#0f5700",  # Darker greens
-  "#f0e4d7", "#e2d4b7", "#c8b99a", "#b29e7f", "#9a8563"   # Beige tones
-)
-
-#ggplot(dat |> filter(!str_starts(category_name, "total")) |>
-#    filter(!category_name == ""), aes(x = value, fill = category_name)) + 
-#geom_density(alpha = .6) +
-#facet_wrap(~category_name, scales = "free", ncol = 3) +
-#  scale_fill_manual(values = green_palette) +
-#theme_bw() +
-#theme(strip.text = element_blank())
-
-
-#ggplot(dat |> filter(str_starts(category_name, "total")) |>
-#    filter(!category_name == ""), aes(x = value, fill = category_name)) + 
-#geom_density(alpha = .6) +
-#facet_wrap(~category_name, scales = "free") +
-#  scale_fill_manual(values = green_palette[1:9]) +
-#theme_bw() +
-#theme(strip.text = element_blank())
-
-# make dataset to look at the proportion of total seagrass per images per year and bank 
-
-``` -->
 
 ::: {.callout-important}
 
@@ -335,16 +304,6 @@ wrong_group <- names(which(table(dat_tally$splitting.var)<=1)) # this should be 
 
 # Summarize 
 
-# Number of images per aggregation distance and year 
-# dat_clean_tal <- dat_clean |>
-#   group_by(splitting.var, year) |>
-#   filter(row_number()==1) |>
-#   ungroup() |>
-#   group_by(aggregation_distance, year) |>
-#   tally() |>
-#   mutate(aggregation_distance = factor(aggregation_distance, levels = c("10", "50", "70", "100", "150","200", "300")))|>
-#   dplyr::arrange(aggregation_distance)
-
 dat_clean$aggregation_distance <- as.factor(dat_clean$aggregation_distance)
 
 dat_clean_tal <- dat_clean |> 
@@ -360,7 +319,7 @@ my_colors <- colorRampPalette(wes_palette("GrandBudapest2", 4, type = "discrete"
 
 p11 <- ggplot(dat_clean_tal, aes(x = as.factor(year), y = n, fill =    aggregation_distance)) + 
   geom_bar(stat = "identity", position = position_dodge(width = .8), alpha = .7, col = "black") + 
-  theme_bw() + ylab("Number of sub-transects")  + 
+  theme_bw() + ylab("Number of sub-transects (repeated)")  + 
   xlab("year") +
   theme(legend.position = "bottom",
         strip.background =element_rect(fill="gray95")) +
@@ -399,7 +358,7 @@ dat_clean_tal3 <- dat_clean |>
 
 
 p3 <- ggplot(dat_clean_tal3, aes(x= aggregation_distance, y = n, fill = aggregation_distance)) + geom_bar(stat = "identity", col = "black") + 
-  theme_bw() + ylab("Number of sub-transects")  + 
+  theme_bw() + ylab("Number of unique sub-transects")  + 
   xlab("") +
   theme(legend.position = "none",
         strip.background =element_rect(fill="gray95"),
@@ -418,5 +377,19 @@ pfig
 ```
 
 ::: {.callout-tip}
-The aggregation distance of XXX meters results in a good balance between spatial (number of sub-transect) and temporal (number of replicated years) resolution (@fig-clust A & B). 
+## Results
+
+The aggregation distances of 150 and 200 meters results in a good balance between spatial (number of sub-transects) and temporal (number of replicated years) resolution (@fig-clust A & B). 150 meters shows more spatial locations but less temporal replicates, 200 meters presents the opposite characteristics.  
+:::
+
+::: {.callout-caution}
+## TO DO list
+
+* find a better location for the github repo (NH)
+* pick the aggregation distance (NH)
+* rerun the analysis using periods within years (JV) 
+* create lookup table for benthic class and seagrass types (persistent, opportunistic, other) (NH)
+* create lookup table for dates and periods (NH) 
+* check shapefile of banks (JV) 
+* process water quality data (JV) 
 :::

@@ -10,9 +10,13 @@ Codes associated with the processing of the seagrass data and spatio-temporal mo
 [0b]: https://github.com/open-aims/bcs_mixing_model/issues/new
 [0c]: https://badges.frapsoft.com/os/v2/open-source.svg?v=103
 
+## Warnings
+
+**1: The `data/` directory is currently being ignored for storage reasons, so you will have to get in touch with the project leader, Dr Nicholas Hammerman (UQ).**
+
 ## Content 
 
-to be added 
+This repo contains data analyses associated with the spatio-temporal modelling of seagrass meadows in the Moreton Bay.  
  
 ## License
 
