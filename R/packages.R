@@ -1,0 +1,18 @@
+# Load required packages
+
+library(knitr)
+library(tidyverse)
+library(lubridate)
+library(purrr)
+library(wesanderson)
+library(grDevices)
+library(plotly)
+library(sp)
+library(leaflet)
+library(mapview)
+library(webshot)
+library(htmlwidgets)
+library(htmltools)
+library(sf)
+library(patchwork)
+library(dplyr)
