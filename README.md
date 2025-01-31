@@ -14,6 +14,8 @@ Codes associated with the processing of the seagrass data and spatio-temporal mo
 
 **1: The `data/` directory is currently being ignored for storage reasons, so you will have to get in touch with the project leader, Dr Nicholas Hammerman (UQ).**
 
+**2: You will need to create a directory `figure/` in the working directory to save plots produce by the qmd file.** 
+
 ## Content 
 
 This repo contains data analyses associated with the spatio-temporal modelling of seagrass meadows in the Moreton Bay.  
