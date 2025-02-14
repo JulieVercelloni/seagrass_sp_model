@@ -71,7 +71,12 @@ dat <- read.csv(paste0(path,"data/compiled_cleaned_data_long.csv"))
 # Get duplicated rows 
 dat_dup <- slice_duplicates(dat)
 # If image duplicates, keep only one 
+if (nrow(dat_dup)>0){
 dat <- clean_data(dat)
+} else{
+dat <- dat 
+}
+
 ```
 
 ::: {.callout-warning}
@@ -80,7 +85,7 @@ dat <- clean_data(dat)
 
 #### Temporal dimension 
 
-The dataset includes `r length(sort(unique(dat$year)))` years of observations. 
+The dataset includes `r length(sort(unique(dat$year)))` years of observations. Observations from 2007 and parts of 2011 were removed for the analyse. 
 
 ```{r}
 #| echo: false
@@ -92,6 +97,12 @@ date_unique <- dat |>
 date_unique$date <- as.Date(date_unique$date)
 years <- format(date_unique$date, "%Y")
 year_counts <- table(years)
+
+yrs_month_to_rm <- c("2011-06", "2011-03", "2011-04", "2011-09")
+
+dat <- dat |>
+  filter(!year == "2007") |>
+  filter(!year_month %in% yrs_month_to_rm)
 ```
 
 ```{r}
@@ -102,33 +113,6 @@ year_counts <- table(years)
 knitr::kable(year_counts)
 ```
 
-::: {.callout-important}
-
-```{r}
-#| include: true
-#| echo: false
-#| eval: true
-dat_issue <- dat |>
- filter(value > total) 
- 
- dat_issue_tal <- dat_issue |>
- group_by(category_name) |>
- count()
-```
-**`r nrow(dat_issue)` images have more than 50 classifications per image. @fig-issue displays associated labels with excessing number of classification.**    
-
-```{r}
-#| label: fig-issue
-#| eval: true
-#| echo: false
-#| fig-cap: Labels with more than 50 classifications per image. 
-ggplot(dat_issue_tal, aes(x = reorder(category_name, -n), y = n)) +
-  geom_bar(stat = "identity", fill = "steelblue") +
-  labs(x = "Label", y = "Count") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
-```
-:::
 
 ::: {.callout-important}
 
@@ -148,7 +132,7 @@ missing_coord_tal <- missing_coord  |>
   count()
 ```
 
-**`r nrow(missing_coord)` images are recorded without coordinates. @tbl-miss shows that most of these images were taken in 2011.** 
+**`r nrow(missing_coord)` images are recorded without coordinates. @tbl-miss shows that most of these images were taken in 2013. These images are removed for the analysis.** 
 
 ```{r}
 #| label: tbl-miss
@@ -159,22 +143,6 @@ kable(missing_coord_tal)
 ```
 :::
 
-
-
-#### List of labels
-```{r}
-#| echo: true
-#| eval: true
-unique(dat$category_name)
-```
-
-#### List of eastern banks (code)
-
-```{r}
-#| echo: true
-#| eval: true
-unique(dat$bank)
-```
 
 ### Interactive map {.unnumbered} 
 
@@ -207,9 +175,9 @@ map_year <-  leaflet(option=leafletOptions(zoomControl = FALSE))%>%
   addMiniMap(position = "topleft", width = 170,
              height = 150) 
 
-saveWidget(map_year, file= paste0(FIGURES_PATH,"data_location.html"))
+saveWidget(map_year, file= paste0(FIGURES_PATH,"image_location.html"))
 ```
-See **data_location.html** in the figure folder. 
+See **image_location.html** in the figure folder. 
 
 ### Data clustering {.unnumbered} 
 
@@ -231,15 +199,15 @@ dat_cut <- dat |>
 dat_full_utm <- dat_cut %>%
   st_as_sf(coords = c("Longitude", "Latitude"), crs = st_crs(4326)) %>%
   st_transform(crs = "+proj=utm +zone=56 +south +datum=WGS84") %>%
-  dplyr::select(year, transect, image_name) %>%
+  dplyr::select(year, bank, image_name) %>%
   mutate(UTMX = st_coordinates(.)[,1],
          UTMY  = st_coordinates(.)[,2]) %>%
   st_drop_geometry() %>%
-  dplyr::arrange(transect)
+  dplyr::arrange(bank)
 
 tree_loc <- dat_full_utm %>%
-  dplyr::select(transect, UTMX, UTMY) %>%
-  split(.$transect) 
+  dplyr::select(bank, UTMX, UTMY) %>%
+  split(.$bank) 
 
 # Clustering
 clust_list <-
@@ -249,12 +217,12 @@ clust_list <-
   }) %>%
   map(.f=hclust)
 
-s_split <- unique(dat_full_utm$transect)
+s_split <- unique(dat_full_utm$bank)
 
 cut.tree.list <- vector("list", length(s_split))
 
 for (i in 1:length(s_split)){
-  cut.tree.list[[i]] <-   filter(dat_full_utm, transect == s_split[i] ) %>%
+  cut.tree.list[[i]] <-   filter(dat_full_utm, bank == s_split[i] ) %>%
      mutate("10" = cutree( clust_list[[i]], h=5)) %>%
     mutate("50" = cutree( clust_list[[i]], h=25)) %>%
     mutate("70" = cutree( clust_list[[i]], h=35)) %>%
@@ -268,7 +236,7 @@ for (i in 1:length(s_split)){
 
 # Make table
 cut.tree.collapsed <- do.call(what = rbind, args = cut.tree.list) %>%
-  mutate(splitting.var = interaction(transect, aggregation_distance, group, drop=T)) 
+  mutate(splitting.var = interaction(bank, aggregation_distance, group, drop=T)) 
 
 ## Keep groups with more than 3 images per year per group 
 
@@ -375,21 +343,211 @@ pfig <- (p3 | p2) / p11 + plot_annotation(tag_levels = 'A')
 #| fig-cap: Results from the hierarchical clustering. 
 pfig
 ```
+```{r}
+#| echo: false
+#| eval: true
+#| cache: false 
 
+# Select aggregation distance and explore multiple year observations 
+dat_st <- dat_clean |>
+ filter(aggregation_distance == "150") |>
+ inner_join(dat) |>
+ dplyr::select(splitting.var, year, bank, transect, year_month, Longitude,
+               Latitude, image_name, category_name, value)
+
+tt <- dat_st |> group_by(splitting.var, year, year_month) |>
+            count() |>
+            group_by(splitting.var, year) |>
+            count() |>
+            filter(n >1)
+     
+tt1 <- dat_st |>
+ inner_join(tt %>% dplyr::select(.,-n)) |>
+ group_by(splitting.var, year, year_month, image_name) |>
+        count() |>
+ group_by(splitting.var, year, year_month) |>
+        count() 
+
+multi_tal <- tt1 |>
+group_by(splitting.var, year) |>
+count() |>
+group_by(year) |>
+count() 
+
+total_tal <- dat_st |> group_by(splitting.var, year) |>
+            count() |>
+            group_by(year) |>
+            count() |>
+            rename(n_total = n)
+
+multi_tal <- inner_join(multi_tal,total_tal) |>
+             mutate(`%` = round(n / n_total,3)*100)
+
+
+```{r}
+#| echo: false
+#| eval: true
+#| cache: false 
+
+# Prepare the data for modelling  
+
+# Keep the last survey for years with seasonal observations 
+index_keep <- tt1 |>
+     group_by(splitting.var, year) |>
+     filter(row_number()== n()) |>
+     dplyr::select(-n)
+
+index_all <- dat_st |>
+  group_by(splitting.var, year, year_month) |>
+  count() |>
+  dplyr::select(-n) 
+  
+index_clean <- index_all|>
+ anti_join(index_keep |> dplyr::select(-year_month)) |>
+ rbind(index_keep)
+
+# Get dat_st with a unique observation per year  
+dat_st <- dat_st |>
+ inner_join(index_clean)
+
+# Get centroid of sub-transect
+dat_cent <- dat_st %>%
+ st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
+ group_by(splitting.var, year) %>%
+ summarise(geometry = st_centroid(st_union(geometry)), .groups = "drop") %>%
+ mutate(longitude = st_coordinates(.)[,1],
+        latitude = st_coordinates(.)[,2]) %>%
+  st_drop_geometry() 
+
+# Summarize cover as COUNT at sub-transect level and add centroids 
+dat_ready <- dat_st |>
+ group_by(category_name, year, splitting.var) |>
+ mutate(COUNT_img = value/2) |>
+ summarize(COUNT = sum(COUNT_img), 
+           nbre_img = n(),
+           TOTAL = nbre_img *50) |>
+ data.frame() |> 
+ inner_join(dat_st |> group_by(splitting.var) |> filter(row_number() == 1) |>
+            dplyr::select(splitting.var, year_month, bank)) |>
+  inner_join(dat_cent) |>
+  filter(!bank == "CH")
+
+# Add season associated with observations 
+dat_ready <- dat_ready |>
+  mutate(month = as.numeric(str_extract(year_month, "(?<=-)\\d{2}"))) |>
+  mutate(season = case_when(
+           month %in% c(12, 01, 02) ~ "Summer",
+           month %in% c(03, 04, 05)  ~ "Autumn",
+           month %in% c(06, 07, 08)  ~ "Winter",
+           month %in% c(09, 10, 11) ~ "Spring"
+         )) |>
+  select(-month) 
+
+# Keep the two species of seagrass of interest 
+
+sp_to_keep <- c("Zostera.muelleri", "Cymodocea.serrulata")
+
+# Bank scale 
+dat_sp_sum <- dat_ready |> filter(category_name %in% sp_to_keep) |>
+              mutate(cover = (COUNT / TOTAL)*100) |>
+              group_by(category_name, bank, year) |>
+              summarize(mean = mean(cover), sd_mean = sd(cover), n = n()) |>
+              mutate(SE = sd_mean / sqrt(n)) 
+
+p1 <- ggplot(dat_sp_sum, aes(x = year, y = mean, col = category_name, group = category_name)) + 
+ geom_point(size=3.8,alpha=.3) + geom_line(linetype="dashed")+
+  geom_errorbar(aes(ymin=mean-2*SE, ymax=mean+2*SE,col=category_name), width=.15)+ 
+  xlab("Year")+ylab("Coverage (%)") + theme_bw() +
+ facet_wrap(~bank) + 
+ scale_color_manual("Seagrass", values = c("#006400", "#B38B00")) +
+  theme(axis.text.x = element_text(size=13, angle = 90),legend.position="bottom",
+        legend.title = element_text(colour = "black", size = 13, face = "bold"), 
+        legend.text = element_text(colour = "black", size = 13), 
+        axis.text.y = element_text(size=13),axis.title.y=element_text(size=15),axis.title.x=element_text(size=15))+
+  scale_x_continuous(breaks=c(2012,2014,2016,2018,2020,2022, 2024)) 
+
+# Sub transect scale 
+p2 <- ggplot(dat_ready |> filter(category_name == "Zostera.muelleri"), aes(x = year, y = (COUNT / TOTAL)*100, group = splitting.var)) + 
+ geom_line(size = 0.2, col = "#B38B00")+ geom_jitter(width = 0.2, height = 0.5, size=2.8,alpha=.3) + 
+  xlab("Year")+ylab("Coverage (%)") + theme_bw() +
+ facet_wrap(~bank) + 
+  ggtitle("Zostera.muelleri")+
+  theme(axis.text.x = element_text(size=13, angle = 90),legend.position="bottom",
+        legend.title = element_text(colour = "black", size = 13, face = "bold"), 
+        legend.text = element_text(colour = "black", size = 13), 
+        axis.text.y = element_text(size=13),axis.title.y=element_text(size=15),axis.title.x=element_text(size=15))+
+  scale_x_continuous(breaks=c(2012,2014,2016,2018,2020,2022, 2024)) 
+
+p3 <- ggplot(dat_ready |> filter(category_name == "Cymodocea.serrulata"), aes(x = year, y = (COUNT / TOTAL)*100, group = splitting.var)) + 
+ geom_line(size = 0.2, col = "#006400")+ geom_jitter(width = 0.2, height = 0.5, size=2.8,alpha=.3) + 
+  xlab("Year")+ylab("Coverage (%)") + theme_bw() +
+ facet_wrap(~bank) + 
+  ggtitle("Cymodocea.serrulata")+
+  theme(axis.text.x = element_text(size=13, angle = 90),legend.position="bottom",
+        legend.title = element_text(colour = "black", size = 13, face = "bold"), 
+        legend.text = element_text(colour = "black", size = 13), 
+        axis.text.y = element_text(size=13),axis.title.y=element_text(size=15),axis.title.x=element_text(size=15))+
+  scale_x_continuous(breaks=c(2012,2014,2016,2018,2020,2022, 2024)) 
+```
 ::: {.callout-tip}
 ## Results
 
-The aggregation distances of 150 and 200 meters results in a good balance between spatial (number of sub-transects) and temporal (number of replicated years) resolution (@fig-clust A & B). 150 meters shows more spatial locations but less temporal replicates, 200 meters presents the opposite characteristics.  
+### Aggregation distance
+The aggregation distances of 150 results in a good balance between spatial (number of sub-transects) and temporal (number of replicated years) resolution (@fig-clust A & B). Data are aggregated at this spatial scale to create sub-transect observations. 
+
+### Seasonal observations 
+`r nrow(multi_tal)` years contain seasonal observations with two surveys per year. @tbl-multi summarizes the percentage of sub-transects with seasonal observations. @tbl-tota shows the number of sub-transects per year. Due to the low number of seasonal observations, the last surveys per year is kept for the modelling being considered to be representative of the associated year.       
+
+### Aggregated data 
+A total `r length(unique(dat_ready$splitting.var))` sub-transects are created across the banks. The number of sub-transects vary from 66 for WA to 192 for MO. Sub-transects are in averaged resurveyed 4.8 times (1.45 SD) with a minimum of 3 times and a maximum of 8 times. 
+
+Add info on number of images per sub-transects. 
+
+```{r}
+#| label: tbl-multi
+#| echo: false
+#| eval: true
+#| tbl-cap: Number of sub-transects and associated percentage with seasonal observations.
+kable(multi_tal)
+```
+```{r}
+#| label: tbl-tota
+#| echo: false
+#| eval: true
+#| tbl-cap: Number of sub-transects per survyed year.
+kable(total_tal)
+```
+
+```{r, fig.height = 6, fig.width = 7}
+#| label: fig-sea
+#| eval: true
+#| echo: false
+#| fig-cap: Dynamics of the two seagrass species at the bank level. Dots show mean cover and error bars standard errors. 
+p1
+```
+
+```{r, fig.height = 8, fig.width = 10}
+#| label: fig-seasub
+#| eval: true
+#| echo: false
+#| fig-cap: Dynamics of the two seagrass species. Dots show cover at sub-transect level. 
+p2 + p3
+```
+
+```{r}
+#| label: tbl-season
+#| echo: false
+#| eval: true
+#| tbl-season: Seasonal observations.
+table(dat_ready$season) / nrow(dat_ready) *100
+```
 :::
+
 
 ::: {.callout-caution}
 ## TO DO list
 
-* find a better location for the github repo (NH)
-* pick the aggregation distance (NH)
-* rerun the analysis using periods within years (JV) 
+* find a better location for the github repo (NH) 
 * create lookup table for benthic class and seagrass types (persistent, opportunistic, other) (NH)
-* create lookup table for dates and periods (NH) 
 * check shapefile of banks (JV) 
-* process water quality data (JV) 
 :::
