@@ -79,10 +79,6 @@ dat <- dat
 
 ```
 
-::: {.callout-warning}
-**`r nrow(dat_dup)` images in the original dataset are duplicated. A unique version of duplicated images are kept in the analysis.**  
-:::
-
 #### Temporal dimension 
 
 The dataset includes `r length(sort(unique(dat$year)))` years of observations. Observations from 2007 and parts of 2011 were removed for the analyse. 
@@ -98,7 +94,7 @@ date_unique$date <- as.Date(date_unique$date)
 years <- format(date_unique$date, "%Y")
 year_counts <- table(years)
 
-yrs_month_to_rm <- c("2011-06", "2011-03", "2011-04", "2011-09")
+yrs_month_to_rm <- c("2011-03", "2011-04", "2011-09")
 
 dat <- dat |>
   filter(!year == "2007") |>
@@ -336,13 +332,6 @@ p3 <- ggplot(dat_clean_tal3, aes(x= aggregation_distance, y = n, fill = aggregat
 pfig <- (p3 | p2) / p11 + plot_annotation(tag_levels = 'A')
 ```
 
-```{r, fig.height = 8, fig.width = 7}
-#| label: fig-clust
-#| eval: true
-#| echo: false
-#| fig-cap: Results from the hierarchical clustering. 
-pfig
-```
 ```{r}
 #| echo: false
 #| eval: true
@@ -413,7 +402,7 @@ dat_st <- dat_st |>
 # Get centroid of sub-transect
 dat_cent <- dat_st %>%
  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
- group_by(splitting.var, year) %>%
+ group_by(splitting.var) %>%
  summarise(geometry = st_centroid(st_union(geometry)), .groups = "drop") %>%
  mutate(longitude = st_coordinates(.)[,1],
         latitude = st_coordinates(.)[,2]) %>%
@@ -495,13 +484,16 @@ p3 <- ggplot(dat_ready |> filter(category_name == "Cymodocea.serrulata"), aes(x 
 ### Aggregation distance
 The aggregation distances of 150 results in a good balance between spatial (number of sub-transects) and temporal (number of replicated years) resolution (@fig-clust A & B). Data are aggregated at this spatial scale to create sub-transect observations. 
 
+```{r, fig.height = 8, fig.width = 7}
+#| label: fig-clust
+#| eval: true
+#| echo: false
+#| fig-cap: Results from the hierarchical clustering. 
+pfig
+```
+
 ### Seasonal observations 
-`r nrow(multi_tal)` years contain seasonal observations with two surveys per year. @tbl-multi summarizes the percentage of sub-transects with seasonal observations. @tbl-tota shows the number of sub-transects per year. Due to the low number of seasonal observations, the last surveys per year is kept for the modelling being considered to be representative of the associated year.       
-
-### Aggregated data 
-A total `r length(unique(dat_ready$splitting.var))` sub-transects are created across the banks. The number of sub-transects vary from 66 for WA to 192 for MO. Sub-transects are in averaged resurveyed 4.8 times (1.45 SD) with a minimum of 3 times and a maximum of 8 times. 
-
-Add info on number of images per sub-transects. 
+`r nrow(multi_tal)` years contain seasonal observations with two surveys per year. @tbl-multi summarizes the percentage of sub-transects with seasonal observations. @tbl-tota shows the number of sub-transects per year. Due to the low number of seasonal observations, the last surveys per year is kept for the modelling being considered to be representative of the associated year. Note that the year 2014 contains 2 surveys but their locations didn't overlap.        
 
 ```{r}
 #| label: tbl-multi
@@ -517,6 +509,11 @@ kable(multi_tal)
 #| tbl-cap: Number of sub-transects per survyed year.
 kable(total_tal)
 ```
+
+### Sub-transect data 
+A total `r length(unique(dat_ready$splitting.var))` sub-transects are created across the banks. The number of sub-transects vary from 66 for WA to 192 for MO. Sub-transects are in averaged resurveyed 4.8 times (1.45 SD) with a minimum of 3 times and a maximum of 8 times. 
+
+An average of 14.6 images (11.4 SD) are aggregated per sub-transect with a minimum of minimum of 3 images and maximum of 125 images.  
 
 ```{r, fig.height = 6, fig.width = 7}
 #| label: fig-sea
@@ -548,6 +545,7 @@ table(dat_ready$season) / nrow(dat_ready) *100
 ## TO DO list
 
 * find a better location for the github repo (NH) 
-* create lookup table for benthic class and seagrass types (persistent, opportunistic, other) (NH)
-* check shapefile of banks (JV) 
+* check shapefile of banks (JV)
+* develop the model (JV)
+* get ereefs data in the raster format (NH) 
 :::
