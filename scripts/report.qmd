@@ -33,7 +33,8 @@ format:
 execute: 
   message: false
   warning: false
-  cache: false
+  cache: true
+  freeze: auto
 editor:
   markdown:
     wrap: 72
@@ -47,6 +48,7 @@ knitr::opts_chunk$set(cache = TRUE)
 #| include: true
 #| echo: false
 #| eval: true
+#| freeze: false
 
 rm(list=ls())
 
@@ -219,7 +221,7 @@ cut.tree.list <- vector("list", length(s_split))
 
 for (i in 1:length(s_split)){
   cut.tree.list[[i]] <-   filter(dat_full_utm, bank == s_split[i] ) %>%
-     mutate("10" = cutree( clust_list[[i]], h=5)) %>%
+    mutate("10" = cutree( clust_list[[i]], h=5)) %>%
     mutate("50" = cutree( clust_list[[i]], h=25)) %>%
     mutate("70" = cutree( clust_list[[i]], h=35)) %>%
     mutate("100" = cutree( clust_list[[i]], h=50)) %>%
@@ -264,8 +266,7 @@ wrong_group <- names(which(table(dat_tally$splitting.var)<=1)) # this should be 
 ```{r}
 #| echo: false
 #| eval: true
-#| cache: false 
-
+#| 
 # Summarize 
 
 dat_clean$aggregation_distance <- as.factor(dat_clean$aggregation_distance)
@@ -335,7 +336,6 @@ pfig <- (p3 | p2) / p11 + plot_annotation(tag_levels = 'A')
 ```{r}
 #| echo: false
 #| eval: true
-#| cache: false 
 
 # Select aggregation distance and explore multiple year observations 
 dat_st <- dat_clean |>
@@ -376,7 +376,6 @@ multi_tal <- inner_join(multi_tal,total_tal) |>
 ```{r}
 #| echo: false
 #| eval: true
-#| cache: false 
 
 # Prepare the data for modelling  
 
@@ -416,8 +415,8 @@ dat_ready <- dat_st |>
            nbre_img = n(),
            TOTAL = nbre_img *50) |>
  data.frame() |> 
- inner_join(dat_st |> group_by(splitting.var) |> filter(row_number() == 1) |>
-            dplyr::select(splitting.var, year_month, bank)) |>
+ inner_join(dat_st |> group_by(splitting.var,year) |> filter(row_number() == n()) |>
+            dplyr::select(splitting.var, year, year_month, bank)) |>
   inner_join(dat_cent) |>
   filter(!bank == "CH")
 
@@ -431,6 +430,8 @@ dat_ready <- dat_ready |>
            month %in% c(09, 10, 11) ~ "Spring"
          )) |>
   select(-month) 
+
+#write.csv(dat_ready, "../data/dat_sub.csv", row.names = F)
 
 # Keep the two species of seagrass of interest 
 
@@ -540,12 +541,605 @@ table(dat_ready$season) / nrow(dat_ready) *100
 ```
 :::
 
+### Modelling {.unnumbered} 
+
+```{r}
+#| echo: false
+#| eval: true
+#| freeze: false
+
+dat <- read.csv(paste0(path,"data/dat_sub.csv")) %>%
+  filter(category_name == "Cymodocea.serrulata") %>% 
+  mutate(across(c(season,bank), as.factor)) %>%
+  mutate(season = relevel(season, ref = "Summer")) %>%
+  mutate(bank = relevel(bank, ref = "MO")) %>%
+  filter(year > 2020) %>%
+  filter(bank %in% c("MO", "AM")) %>%
+  droplevels()
+
+# dat_season <- dat %>%
+#  group_by(bank, year, season) %>%
+#  mutate(cover = COUNT / TOTAL) %>%
+#  summarize(mean_cover = mean(cover), sd_cover = sd(cover), n_obs = n()) %>%
+#  mutate(SE = sd_cover / sqrt(n_obs))
+
+# p_season <- ggplot(dat_season, aes(x = year, y = mean_cover, col = season)) + 
+#   facet_wrap(~bank) +
+#   geom_ribbon(aes(x = year, ymin = mean_cover - SE, ymax = mean_cover 
+#   + SE, fill = season), alpha = .3, colour = NA) +
+#   geom_point() + geom_line() + 
+#   theme_minimal() +
+#   scale_fill_manual(values = c("Summer" = "#E69F00", "Winter" = "#56B4E9", "Autumn" = "#009E73")) +
+#   scale_color_manual(values = c("Summer" = "#E69F00", "Winter" = "#56B4E9", "Autumn" = "#009E73")) 
+
+dat <- dat %>% filter(!season == "Summer") #162 obs removed 
+
+dat_sf <- dat %>%
+              dplyr::select(longitude,latitude) %>%
+              distinct()%>%
+              st_as_sf(coords = c("longitude", "latitude"), crs = st_crs(4326))
+
+# read bank shapefile
+bank_sp <- st_read(paste0(path,"data/BanksSplit.shp"))# %>%
+ # filter(BankID %in% c("MO", "AM"))
+
+bank_sp_utm <- bank_sp %>%
+ st_transform(crs = 32756) 
+
+## Make grid - 1km
+bbox <- st_bbox(bank_sp_utm)
+hexpred <- st_make_grid(st_as_sfc(bbox), cellsize = 1000, square = FALSE) %>%
+              st_intersection(bank_sp_utm) %>%
+              st_as_sf() %>%
+             filter(st_geometry_type(.) %in% c("POLYGON", "MULTIPOLYGON"))
+
+p_bank<- ggplot() + 
+  geom_sf(data = bank_sp, fill = "gray66", alpha = .2) + 
+  geom_sf(data = dat_sf, col = "red", size = 0.5) +
+  theme_bw() + 
+  xlab("longitude") + ylab("latitude")
+
+p_grid <- ggplot() + 
+  geom_sf(data = hexpred, fill = NA) + 
+  geom_sf(data = dat_sf, col = "red", size = 0.5) +
+  theme_bw() + 
+  xlab("longitude") + ylab("latitude")
+
+p_loc <- p_bank + p_grid + plot_annotation(tag_levels = 'A')
+
+# Transform grid and add tier levels 
+hexpred_84 <- hexpred %>%
+              st_cast("POLYGON", warn = FALSE) %>%
+              st_transform(crs = 4326) %>%
+              data.frame() %>%
+              mutate(tier = row_number() + 1000) %>%
+              st_set_geometry("x")
+
+# coords_p <- hexpred_84 %>%
+#               st_centroid() %>%
+#             mutate(longitude = st_coordinates(.)[,1],
+#                    latitude = st_coordinates(.)[,2]) %>%
+#             st_drop_geometry()
+
+# write.csv(coords_p, "../data/hexpred_coords_centroid.csv", row.names = F)
+
+dat_sf_all <- dat %>%
+              st_as_sf(coords = c("longitude", "latitude"), crs = st_crs(4326)) %>%
+              st_join(hexpred_84)
+
+# Remove observations outside tier cells
+missing_tier <- dat_sf_all  %>% filter(is.na(tier))
+unique(missing_tier$splitting.var)
+
+dat_sf_all  <- dat_sf_all  %>% 
+            filter(!is.na(tier)) %>%
+            mutate(longitude = st_coordinates(.)[,1],
+                   latitude = st_coordinates(.)[,2]) %>%
+            arrange(year) 
+
+# Format repeated n year times  
+pred.list <- list()
+
+for (i in 1:length(unique(dat_sf_all$year))){
+  pred.list[[i]] <- hexpred_84
+}
+
+hexpred_84_all <- do.call(rbind, pred.list) %>%
+  data.frame() %>%
+  mutate(year = rep(unique(sort(dat_sf_all$year)), each = nrow(hexpred_84))) %>%
+              st_set_geometry("x")
+
+# Add bank
+hexpred_84_all <- hexpred_84_all %>%
+    st_join(bank_sp %>%
+ st_transform(crs = 4326)) %>% 
+ rename(bank = BankID) %>%
+  mutate(TOTAL = 1) %>%
+  arrange(year)
+
+# Assign a unique value of bank for hexagons at the edge 
+hexpred_84_all <- hexpred_84_all %>% group_by(tier, year)%>% filter(row_number() == 1) %>%
+                  arrange(tier)
+
+```
+
+#### Environmental variables 
+```{r}
+#| echo: false
+#| eval: true
+#| freeze: false
+
+# Environmental variables https://research.csiro.au/ereefs/models/model-outputs/gbr4/salinity-and-temperature/
+river <- read.csv(paste0(path,"data/GBR4_river_tracing_v2_2010_2024_monthly_0.5m.csv")) %>% 
+  filter(Variable %in% c("cab", "log", "pin", "bri")) %>%
+  rename(longitude = Longitude, 
+         latitude = Latitude) %>%
+  arrange(longitude, latitude) 
+
+other <- read.csv(paste0(path,"data/GBR4_hydro_v2_2010_2024_monthly_0.5m_sal_temp.csv")) %>% 
+  rename(longitude = Longitude, 
+         latitude = Latitude) %>%
+  arrange(longitude, latitude)  
+
+# Location centroids 
+#hex_loc <- read.csv("../data/hexpred_coords_centroid.csv") %>%
+ # arrange(longitude, latitude) %>%
+#  st_as_sf(coords = c("longitude", "latitude")) 
+
+# Align with exact longitude and latitude values of the predictive layer and add hexagons 
+river <- make_new_geom(river, hex_loc, hexpred_84) %>% arrange(Variable, tier, Aggregated.Date.Time)
+other <- make_new_geom(other, hex_loc, hexpred_84) %>% arrange(Variable, tier, Aggregated.Date.Time)
+
+# Get surveys date 
+
+dat_survey <- dat_sf_all %>%
+ group_by(tier, year, bank) %>%
+ filter(row_number() == 1) %>%
+ dplyr::select(tier, year, year_month) %>%
+ st_drop_geometry()
+
+# Extract highest records associated with year_month and 11 previous - keep the maximum 
+
+river_process <- process_cov(dat_survey, river, hexpred_84) %>% 
+    mutate(name_plot = case_when(Variable == "cab" ~ "Caboolture",
+                                 Variable == "log" ~ "Logan",
+                                 Variable == "pin" ~ "Pine",
+                                 Variable == "bri" ~ "Brisbane",
+                                 TRUE ~ "NA"))
+                                 
+river_all <- river_process %>%
+    arrange(tier, year) %>%
+    group_by(year, tier) %>%
+    summarize(All = sum(rolling_max)) 
+
+other_process <- process_cov(dat_survey, other, hexpred_84) %>%
+    mutate(name_plot = Variable) # TO SELECT VARIABLES 
+
+## Viz of covariates 
+
+########## River discharges 
+palette_choice <- scale_fill_viridis_c(option = "magma", direction = -1) 
+variables <- unique(river_process$name_plot)
+plots_river <- map2(variables, list(river_process), plot_cov)
+walk(plots_river, print)
+
+
+p_river <- ggplot(river_process, aes(x = as.factor(year), y = rolling_max, color = name_plot, group = tier)) +
+  geom_line() +
+  facet_wrap(~name_plot, scales = "free_y") +
+  theme_bw() +
+  xlab("year") + ylab("Max discharge") + 
+  scale_color_manual("River", values = wes_palette("Moonrise2", n = length(unique(river_process$name_plot)), type = "continuous")) + 
+  theme(legend.position = "none")
+
+p_all <- ggplot(river_all, aes(x = as.factor(year), y = All, group = tier)) +
+  geom_line(color = "#E3C567") +
+  theme_bw() +
+  xlab("year") + ylab("Cumulative discharge") 
+
+p_rivers <- p_all + p_river + plot_annotation(tag_levels = 'A')
+
+########## Others  
+palette_choice <- scale_fill_viridis_c(option = "viridis", direction = -1) 
+variables <- unique(other_process$name_plot)
+plots_other <- map2(variables, list(other_process), plot_cov)
+walk(plots_other, print)
+
+p_other <- ggplot(other_process, aes(x = as.factor(year), y = rolling_max, color = name_plot, group = tier)) +
+  geom_line() +
+  facet_wrap(~name_plot, scales = "free_y") +
+  theme_bw() +
+  xlab("year") + ylab("Max value") + 
+  scale_color_manual("Var", values = wes_palette("FantasticFox1", n = length(unique(other_process$name_plot)), type = "continuous")) + 
+  theme(legend.position = "none")
+
+# Relationship covariates and seagrass cover 
+# cov_all <- rbind(river_process, other_process)
+
+# dat_with_cov <- left_join(dat_sf_all %>% st_drop_geometry(), 
+#                            cov_all) %>%
+#                 st_set_geometry("x")
+
+# ggplot(dat_with_cov, aes(x = COUNT / TOTAL, y = rolling_max)) + 
+# geom_point() + 
+# facet_wrap(~name_plot, scales = "free_y") +
+#   scale_x_continuous(breaks = scales::pretty_breaks())
+```
+
+#### FRK
+```{r}
+#| echo: false
+#| eval: true
+#| freeze: false
+
+library(FRK)
+library(spacetime)
+library(tidybayes)
+
+## Construct STIDF object from data
+dat$Year <- as.Date(paste0(as.character(dat$year),"-01-01")) 
+dat$k_Z <- dat$TOTAL                                         
+lon_idx <- which(names(dat) == "longitude")                  
+lat_idx <- which(names(dat) == "latitude")
+STObj <- stConstruct(x = dat,                               
+                       space = c(lon_idx, lat_idx), 
+                       time = "Year",                      
+                       interval = TRUE)     
+
+## Predictive layer
+HexPred_sp <- as_Spatial(hexpred_84_all %>% dplyr::select(tier, year, bank))                                   
+nHEX <- nrow(subset(HexPred_sp, year == unique(dat$year)[1]))       
+nYEAR <- length(unique(HexPred_sp@data$year))            
+  
+HexPred_sp@data$n_spat <- rep(1:nHEX, each = nYEAR)   
+BAUs_spat <- subset(HexPred_sp, year == unique(dat$year)[1])        
+coordnames(BAUs_spat) <- c("longitude", "latitude")
+nrow(BAUs_spat@data)
+
+ ## Construct spatio-temporal BAUs (will not contain covariate information for now)
+ST_BAUs <- auto_BAUs(manifold = STplane(),
+                       data = STObj,
+                       spatial_BAUs = BAUs_spat,
+                       tunit = "years")
+  
+ST_BAUs <- ST_BAUs[, 1:nYEAR, 1:2]                 
+ST_BAUs$year <- as.character(ST_BAUs$t + unique(dat$year)[1]-1)    
+ST_BAUs$n_spat <- rep(1:nHEX, nYEAR)              
+  
+HexPred_sp@data$year <- as.character(HexPred_sp@data$year) 
+HexPred_sp@data$tier <- as.factor(HexPred_sp@data$tier) 
+
+nrow(ST_BAUs@data)
+nrow(HexPred_sp@data)
+
+ST_BAUs@data <- left_join(ST_BAUs@data, HexPred_sp@data , by = c("year","n_spat")) 
+nrow(ST_BAUs@data)
+
+ST_BAUs$fs <- 1                  
+ST_BAUs@sp@proj4string  <- CRS()  
+  
+## Covariates must only be in BAUs, so remove covariates associated with data
+overlapping_fields <- intersect(names(STObj@data), names(ST_BAUs@data))
+STObj@data[,overlapping_fields] <- NULL
+  
+  ## Create basis functions
+basis <- auto_basis(STplane(),
+                      STObj,
+                      tunit = "years",
+                      nres = 2L, # for development
+                      #nres = 3L, # for final run
+                      regular = TRUE)
+
+p1 <- show_basis(basis@Basis1)
+p2 <- show_basis(basis@Basis2)
+
+p_basis <- p1 + p2
+
+#ggsave(plot =  p_basis , width=8, height=4, file = "extra/viz_basis_functions.png")
+
+## Fit FRK model
+fit <- FRK(f = COUNT ~ 1 + bank, 
+         data = list(STObj), 
+         BAUs = ST_BAUs, 
+         basis = basis, 
+         response = "binomial", 
+         link = "logit", 
+         K_type = "precision", 
+         method = "TMB", 
+         est_error = FALSE)
+
+pred <- predict(fit, type = c("mean"))
+
+  # Extracting posterior distributions of predictive locations 
+  
+post_dist_df <- as.data.frame(pred$MC$mu_samples) %>% 
+    mutate(year = ST_BAUs@data$year) %>%
+    mutate(tier = ST_BAUs@data$tier) %>%
+    mutate(id_loc = row_number()) %>%
+    tidyr::pivot_longer(!c(year,tier,id_loc),
+                        names_to = "draw", 
+                        values_to = "pred"
+    )
+  
+  # Summary predictions at tier level
+hexpred_84_all$tier <- as.factor(hexpred_84_all$tier)
+  
+pred_sum_sf <- post_dist_df %>% group_by(year,tier) %>% 
+    median_hdci(pred) %>%
+    inner_join(hexpred_84_all %>% 
+              st_as_sf() %>% group_by(tier) %>% 
+    summarize() %>% dplyr::select(x,tier)) %>% 
+    st_as_sf(sf_column_name = "x") %>%
+    mutate(Unc = .upper - .lower) %>%
+    mutate(tier_year = paste0(tier,year)) %>%
+    dplyr::select(year, tier, pred, .lower, .upper, Unc, tier_year)
+
+ggplot(data = pred_sum_sf) + geom_sf(aes(fill = pred)) + facet_wrap(~year) +
+  scale_fill_viridis_c(option = "plasma")  
+
+ggplot(data = pred_sum_sf) + geom_sf(aes(fill = Unc)) + facet_wrap(~year) +
+  scale_fill_viridis_c(option = "cividis")
+
+### Effect of disturbances
+
+# Full table 
+coef_table_all <- coef_uncertainty(fit, percentiles = c(2.5, 50, 97.5), nsim = 400, random_effects = FALSE) %>%
+  data.frame() %>%
+  tibble::rownames_to_column() %>%
+  tidyr::pivot_longer(cols =  !rowname, names_to = "param", values_to = "value")%>%
+  mutate(Type = ifelse(str_starts(param, "X.Intercept"), "random", "fixed")) %>%
+  tidyr::pivot_wider(names_from = rowname, values_from = value)
+
+p_coef <- ggplot(coef_table_all[-1,], aes(y=param, x=`50%`))+ geom_point() +geom_errorbar(aes(y = param, xmin = `2.5%`, xmax = `97.5%`), width=.1) + geom_vline(xintercept = 0, linetype = "dashed") +theme_bw() +
+  xlab("Effect size") + ylab("")
+
+#ggsave(plot =  p_coef,width=6, height=4, file = "extra/fixed_effects_model.png")
+
+```
+#### INLA
+
+```{r}
+#| echo: false
+#| eval: true
+#| freeze: false
+
+# Prepare objects for the model 
+
+
+# Make the mesh 
+
+# Loc <- dat_sf_all %>%
+#  group_by(longitude, latitude) %>%
+#  distinct()
+
+# mesh <- inla.mesh.2d(Loc,
+#                       max.edge = c(0.05, 0.5))  
+
+# #plot(mesh, main="", lwd=0.5); points(dat$longitude, dat$latitude, col="red")
+
+# spde <- inla.spde2.matern(mesh, alpha = 2) #, prior.range = c(.02, .01), prior.sigma = c(3, 0.01)
+# spde$n.spde
+
+# i.spatial <- inla.spde.make.index('spatial.field',
+#                                    n.spde = spde$n.spde,
+#                                    n.group = length(unique(dat$year)))
+
+# # Prep INLA objects 
+# coords <-    dat_sf_all %>%
+#              st_coordinates() %>%
+#               `[`(,c('X','Y'))
+
+# A.est <- inla.spde.make.A(mesh = mesh,
+#                             loc = coords,
+#                             group = as.numeric(dat_sf_all$year))
+
+# covariate <- dat_sf_all  %>%
+#     dplyr::select(year, splitting.var, season, tier, bank) %>%
+#     st_drop_geometry()  %>% 
+#   mutate(across(year, as.factor)) 
+
+
+
+# coords_p <- hexpred_84_all %>%
+#              st_centroid() %>%
+#              st_coordinates() %>%
+#               `[`(,c('X','Y')) 
+
+# A.pred <- inla.spde.make.A(mesh = mesh,
+#                             loc = coords_p,
+#                             group = as.numeric(hexpred_84_all$year))
+
+# covariate_p <- hexpred_84_all %>%
+#   dplyr::select(year, tier, bank) %>% #, season, tier, bank
+#   st_drop_geometry() %>% 
+#   mutate(across(year, as.factor)) 
+
+# # Stacks 
+
+# rprior<- list(theta = list(prior = "pccor1", param = c(0,0.9)))
+
+# stack.est <- inla.stack(data=list(y = dat_sf_all$COUNT,
+#                                     Total= dat_sf_all$TOTAL),
+#                           A=list(A.est, 1, 1, 1, 1, 1),
+#                           effects=list(c(i.spatial, list(b0=1)),
+#                           list(year = covariate$year),
+#                           list(splitting.var = covariate$splitting.var),
+#                           list(season = covariate$season),
+#                           list(tier = covariate$tier),
+#                           list(bank = covariate$bank)),
+#                           tag = 'est')
+
+
+# stack.pred <- inla.stack(data=list(y = NA,
+#                                   Total= hexpred_84_all$TOTAL),
+#                         A=list(A.pred, 1, 1), #, 1, 1, 1
+#                         effects=list(c(i.spatial, list(b0=1)),
+#                                      list(year = covariate_p$year),
+#                                     # list(season = covariate_p$season)#,
+#                                     # list(tier = covariate_p$tier)#,
+#                                      list(bank = covariate_p$bank)
+#                                      ),
+#                         tag = 'pred')
+
+# stack.full <- inla.stack(stack.est, stack.pred)
+                      
+# form <- y ~ -1 + b0 +  #bank + 
+#     f(spatial.field, model = spde, group = spatial.field.group, 
+#     control.group = list(model = "ar1", hyper=rprior)) +  
+#     f(bank, model = "iid", constr=TRUE)  +  
+#     f(season, model = "iid", constr=TRUE)
+
+# Fit the model 
+
+# fit0 <-  inla(obj_inla$form,data = inla.stack.data(obj_inla$stack.full),
+#                   family= 'binomial',
+#                   Ntrials= obj_inla$Total,
+#                   control.predictor = list(compute = TRUE,
+#                                            link = 1,
+#                                            A = inla.stack.A(obj_inla$stack.full)
+#                   ),
+#                   control.compute = list(return.marginals.predictor=TRUE,config = TRUE, dic= TRUE,
+#                                          return.marginals = TRUE), 
+#                   verbose = FALSE)
+
+# fit <-  inla(form, data = inla.stack.data(stack.est),
+#              family= 'binomial',
+#              Ntrials= Total,
+#              control.predictor = list(compute = TRUE,
+#                                       link = 1,
+#                                       A = inla.stack.A(stack.est)
+#              ),
+#              control.compute = list(return.marginals.predictor=TRUE,config = TRUE, dic= TRUE, return.marginals = TRUE), 
+#              verbose = FALSE, 
+#              control.fixed = list(expand.factor.strategy = 'inla')
+# )
+
+# fit$summary.random$bank
+# fit$summary.random$season
+
+# # Model fit
+# index_est <- inla.stack.index(stack = stack.full, tag = "est")$data
+# dat_sf_all$pred <- fit$summary.fitted.values[index_est,"mean"]
+
+# ggplot(dat_sf_all, aes(x = COUNT/TOTAL, y = pred)) + geom_point() + 
+# geom_abline(col = "red")
+
+# Predictions at new locations 
+#index_pred <- inla.stack.index(stack = stack.full, tag = "pred")$data
+
+#hexpred_84_all$pred <- fit0$summary.fitted.values[index_pred,"mean"]
+#hexpred_84_all$.lower <- fit0$summary.fitted.values[index_pred,"0.025quant"]
+#hexpred_84_all$.upper <- fit0$summary.fitted.values[index_pred,"0.975quant"]
+#hexpred_84_all$unc <- hexpred_84_all$.upper - hexpred_84_all$.lower
+
+#ggplot(data = hexpred_84_all) + geom_sf(aes(fill = pred)) + facet_wrap(~year) +
+#  scale_fill_viridis_c(option = "magma")
+
+#ggplot(data = hexpred_84_all) + geom_sf(aes(fill = unc)) + facet_wrap(~year) +
+#  scale_fill_viridis_c(option = "viridis")
+
+# Retrieve predictions
+
+# draws <- inla.posterior.sample(2000, result=fit , seed=123, add.names=FALSE)
+
+# # names of variables from draw 
+# x1<- rownames(draws[[1]]$latent) %>% str_replace_all("[:digit:]", "")
+# unique(x1)
+
+# ## retrieve the spatial.fields posteriors
+# hexpred_centr <- hexpred %>%
+#               st_transform(crs = 4326)  %>% 
+#               st_centroid() %>%
+#               st_as_sf() %>% 
+#               st_join(bank_sp %>%
+#               st_transform(crs = 4326)) %>% 
+#             mutate(longitude = st_coordinates(.)[,1],
+#                    latitude = st_coordinates(.)[,2]) %>%
+#             rename(bank = BankID)  %>%
+#               mutate(tier = row_number() + 1000) 
+
+# proj.grid <- inla.mesh.projector(mesh, loc=as.matrix(cbind(hexpred_centr$longitude, hexpred_centr$latitude)))
+# cellmeans = sapply(draws, function(x) x[['latent']])
+
+# i.mod <- lapply(c('APredictor','^Predictor','spatial.field:','bank','season', '^b0:1$'),
+#                 function(x) grep(x, draws[[1]]$latent %>% rownames))
+
+# cellmeans.full <- cellmeans[i.mod[[3]],] %>%          
+#   as.data.frame %>%                                 ## convert to data.frame
+#   mutate(year = rep(as.numeric(unique(dat_sf_all$year)),
+#                       each = which(i.spatial$spatial.field.group == 1) %>% length)) %>%
+#   group_by(year) %>%
+#   nest() %>%
+#   #   ## project onto spatial field
+#   mutate(Spatial = map(.x = data,
+#                        .f = function(x)
+#                          as.matrix(inla.mesh.project(proj.grid, x))))%>%
+#   mutate(geometry = list(hexpred_centr %>%
+#                            dplyr::select(longitude, latitude)))
+
+# ## retrieve the fixed effects 
+# Xmat <- cbind(1,model.matrix(~ -1 + bank, data = hexpred_centr)) #+ b0
+
+# wch <- c(6,4)
+# ii = unlist(i.mod[wch])
+# cellmeans.full.1 <- t(cellmeans[ii,]) %*% t(Xmat)
+
+# cellmeans.fixed <- hexpred_centr %>%
+#   dplyr::select(longitude, latitude, bank, tier) %>%
+#   cbind(V = t(cellmeans.full.1)) %>%
+#   as.data.frame %>%                           
+#   dplyr::select(starts_with("V")) %>%
+#   slice(rep(row_number(), length(unique(dat_sf_all$year)))) %>%
+#   mutate(year = rep(unique(dat_sf_all$year),each=nrow(hexpred_centr))) %>%
+#   group_by(year) %>%
+#   nest() 
+
+# ## Add the posteriors together
+# cellmeans.full.c <-
+#   cellmeans.full %>%
+#   full_join(cellmeans.fixed %>%
+#               rename(data1 = data)) %>%
+#   mutate(value = map2(.x = Spatial, .y = data1,
+#                       .f = function(.x, .y) as.data.frame(.x + .y))) %>%
+#   dplyr::select(year, geometry, value) %>%
+#   unnest(cols = c(geometry, value)) %>%
+#   pivot_longer(c = starts_with("V"), names_to = "Rep") %>%
+#   mutate(Rep = gsub('\\.','',Rep)) %>%
+#   ungroup()
+
+# cellmeans.full.cc <- cellmeans.full.c %>%
+#   mutate(value = plogis(value))
+
+# pred_sum_sf <- cellmeans.full.cc %>%
+#     group_by(year,longitude, latitude) %>% 
+#     median_hdci(value) %>%
+#     inner_join(hexpred_centr) %>% 
+#     st_as_sf(sf_column_name = "x") %>%
+#     mutate(Unc = .upper - .lower) %>%
+#     mutate(tier_year = paste0(tier,year)) %>%
+#     dplyr::select(year, tier, value, .lower, .upper, Unc, tier_year)
+        
+# pred_hex <- hexpred_84_all  %>%
+#     mutate(tier_year = paste0(tier,year)) %>%
+#     dplyr::select(tier_year, geometry) %>%
+#     data.frame() %>%
+#     left_join(pred_sum_sf)    
+# st_geometry(pred_hex) <- "geometry"
+
+# ggplot(data = pred_hex) + geom_sf(aes(fill = value)) + facet_wrap(~year) +
+#   scale_fill_viridis_c(option = "plasma")  
+
+# ggplot(data = pred_hex) + geom_sf(aes(fill = .lower)) + facet_wrap(~year) +
+#   scale_fill_viridis_c(option = "viridis")
+
+# ggplot(data = pred_hex) + geom_sf(aes(fill = .upper)) + facet_wrap(~year) +
+#   scale_fill_viridis_c(option = "cividis")
+```
+
+
 
 ::: {.callout-caution}
 ## TO DO list
 
 * find a better location for the github repo (NH) 
-* check shapefile of banks (JV)
-* develop the model (JV)
-* get ereefs data in the raster format (NH) 
 :::
